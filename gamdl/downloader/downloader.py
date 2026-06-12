@@ -1,3 +1,4 @@
+import os
 import shutil
 from pathlib import Path
 from typing import AsyncGenerator
@@ -5,6 +6,7 @@ from typing import AsyncGenerator
 import structlog
 
 from ..interface.types import AppleMusicMedia
+from .base import _AUDIO_EXTS
 from .constants import TEMP_PATH_TEMPLATE
 from .enums import DownloadMode
 from .exceptions import (
@@ -194,16 +196,28 @@ class AppleMusicDownloader:
             raise GamdlDownloaderSyncedLyricsOnlyError()
 
         if not self.overwrite:
+            # One directory scan covers the exact path and every alternate audio
+            # extension in a single SMB round-trip, instead of up to 9 stat()
+            # calls per track on the NAS.
             _final = Path(item.final_path)
-            _audio_exts = {".m4a", ".flac", ".mp3", ".ogg", ".opus", ".wav", ".mp4", ".m4v"}
-            _exists = _final.exists()
-            if not _exists:
-                # Check same filename with any alternate audio extension
-                for _ext in _audio_exts:
-                    _candidate = _final.with_suffix(_ext)
-                    if _candidate.exists():
-                        _exists = True
-                        break
+            _stem = _final.stem
+            _exists = False
+            try:
+                with os.scandir(_final.parent) as _it:
+                    for _entry in _it:
+                        _name = _entry.name
+                        _dot = _name.rfind(".")
+                        if _dot <= 0:
+                            continue
+                        if (
+                            _name[:_dot] == _stem
+                            and _name[_dot:].lower() in _AUDIO_EXTS
+                            and _entry.is_file()
+                        ):
+                            _exists = True
+                            break
+            except (FileNotFoundError, NotADirectoryError):
+                pass
             if _exists:
                 raise GamdlDownloaderMediaFileExistsError(item.final_path)
 
