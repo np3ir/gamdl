@@ -22,6 +22,37 @@ from .enums import DownloadMode
 
 logger = structlog.get_logger(__name__)
 
+# Compiled once at import instead of per-track inside get_final_path.
+_ALBUM_CLEAN_SUFFIX_RE = re.compile(
+    r"\s*-\s*(?:Single|EP|Single Version|Deluxe Edition|Deluxe Version|"
+    r"Expanded Edition|Special Edition|Remastered|Remaster)\s*$",
+    re.IGNORECASE,
+)
+_ALBUM_CLEAN_EXPLICIT_RE = re.compile(
+    r"\s*\((Explicit|Clean)\)\s*$", re.IGNORECASE
+)
+_ALBUM_FEAT_KW = (
+    r"f(?:ea)?t\.?|featuring|with|duet\s+with|w/|con|junto\s+a|"
+    r"starring|prod\.?\s*by|prod\.?|&"
+)
+_ALBUM_CLEAN_FEAT_RE = re.compile(
+    rf"\s*[\(\[]\s*(?:{_ALBUM_FEAT_KW})\s*[^\)\]]+[\)\]]\s*$", re.IGNORECASE
+)
+# Release-type suffix in a folder name, e.g. "Album Name (SINGLE)".
+_RT_SUFFIX_RE = re.compile(
+    r"\s*\((ALBUM|SINGLE|EP|COMPILATION|ANTHOLOGY)\)\s*$", re.IGNORECASE
+)
+_AUDIO_EXTS = {".m4a", ".flac", ".mp3", ".ogg", ".opus", ".wav", ".mp4", ".m4v"}
+
+
+def _norm_folder_name(name: str) -> str:
+    """Strip release-type suffix and accents, lowercase — for sibling matching."""
+    s = _RT_SUFFIX_RE.sub("", name).strip()
+    decomposed = unicodedata.normalize("NFD", s)
+    return "".join(
+        c for c in decomposed if unicodedata.category(c) != "Mn"
+    ).lower().strip()
+
 
 def _download_ytdlp_process(
     stream_url: str,
@@ -123,6 +154,9 @@ class AppleMusicBaseDownloader:
             artist_separator.strip("\"'") if isinstance(artist_separator, str) else " & "
         )
         self.use_fullwidth_replacements = use_fullwidth_replacements
+        # Cache of computed-folder -> resolved-folder so the sibling-dedup NAS
+        # scan runs once per album instead of once per track.
+        self._folder_redirect_cache: dict[str, str] = {}
 
         self._initialize_binary_paths()
 
@@ -246,31 +280,29 @@ class AppleMusicBaseDownloader:
         _explicit = (
             " (explicit)" if tags.rating is not None and tags.rating.value == 1 else ""
         )
-        _album_clean = re.sub(
-            r"\s*-\s*(?:Single|EP|Single Version|Deluxe Edition|Deluxe Version|"
-            r"Expanded Edition|Special Edition|Remastered|Remaster)\s*$",
-            "",
-            tags.album or "",
-            flags=re.IGNORECASE,
-        ).strip() if tags.album else None
+        _album_clean = (
+            _ALBUM_CLEAN_SUFFIX_RE.sub("", tags.album).strip()
+            if tags.album
+            else None
+        )
         # Strip parenthetical explicit/clean suffixes: "(Explicit)" / "(Clean)"
-        _album_clean = re.sub(
-            r"\s*\((Explicit|Clean)\)\s*$", "", _album_clean or "", flags=re.IGNORECASE
-        ).strip() or _album_clean
+        _album_clean = (
+            _ALBUM_CLEAN_EXPLICIT_RE.sub("", _album_clean or "").strip()
+            or _album_clean
+        )
         # Strip artist mention suffixes from album names:
         # (feat. X), (ft. X), (featuring X), (with X), (duet with X), (con X), (& X)
-        _feat_kw = r"f(?:ea)?t\.?|featuring|with|duet\s+with|w/|con|junto\s+a|starring|prod\.?\s*by|prod\.?|&"
-        _album_clean = re.sub(
-            rf"\s*[\(\[]\s*(?:{_feat_kw})\s*[^\)\]]+[\)\]]\s*$",
-            "", _album_clean or "", flags=re.IGNORECASE
-        ).strip() or _album_clean
+        _album_clean = (
+            _ALBUM_CLEAN_FEAT_RE.sub("", _album_clean or "").strip() or _album_clean
+        )
 
         _artist_initials = self._get_artist_initials(tags.album_artist or tags.artist)
         _release = getattr(tags, "release_type", None) or "ALBUM"
 
+        formatter = CustomStringFormatter()
         for i, part in enumerate(template_parts):
             is_folder = i < len(template_parts) - 1
-            formatted_part = CustomStringFormatter().format(
+            formatted_part = formatter.format(
                 part,
                 album=(tags.album, "Unknown Album"),
                 album_clean=(_album_clean, "Unknown Album"),
@@ -319,56 +351,53 @@ class AppleMusicBaseDownloader:
 
         # If the computed album folder doesn't exist yet, check if a sibling folder
         # with the same album name (ignoring release type suffixes) already has audio
-        # files — if so, reuse that folder to avoid duplicates.
+        # files — if so, reuse that folder to avoid duplicates. Cached per computed
+        # folder so the NAS scan runs once per album, not once per track.
         if not playlist_tags and tags.album:
             computed_folder = Path(self.output_path, *formatted_parts[:-1])
-            if not computed_folder.exists():
-                parent = computed_folder.parent
-                _audio_exts = {".m4a", ".flac", ".mp3", ".ogg", ".opus", ".wav", ".mp4", ".m4v"}
-                _rt_re = re.compile(
-                    r"\s*\((ALBUM|SINGLE|EP|COMPILATION|ANTHOLOGY)\)\s*$", re.IGNORECASE
-                )
-
-                def _norm(s: str) -> str:
-                    s = _rt_re.sub("", s).strip()
-                    decomposed = unicodedata.normalize("NFD", s)
-                    return "".join(
-                        c for c in decomposed if unicodedata.category(c) != "Mn"
-                    ).lower().strip()
-
-                comp_norm = _norm(computed_folder.name)
-                # Extract computed release type from folder name for comparison
-                comp_rt_match = _rt_re.search(computed_folder.name)
-                comp_rt = comp_rt_match.group(1).upper() if comp_rt_match else ""
-                try:
-                    for sibling in parent.iterdir():
-                        if not sibling.is_dir() or sibling == computed_folder:
-                            continue
-                        if _norm(sibling.name) != comp_norm:
-                            continue
-                        # Only redirect if sibling has the same release type
-                        sib_rt_match = _rt_re.search(sibling.name)
-                        sib_rt = sib_rt_match.group(1).upper() if sib_rt_match else ""
-                        if sib_rt != comp_rt:
-                            continue
-                        try:
-                            has_audio = any(
-                                f.suffix.lower() in _audio_exts
-                                for f in sibling.iterdir()
-                                if f.is_file()
-                            )
-                        except OSError:
-                            has_audio = False
-                        if has_audio:
-                            final_path = str(sibling / formatted_parts[-1])
-                            log.debug("reusing_existing_folder", folder=str(sibling))
-                            break
-                except OSError:
-                    pass
+            computed_key = str(computed_folder)
+            redirect = self._folder_redirect_cache.get(computed_key)
+            if redirect is None and not computed_folder.exists():
+                redirect = self._resolve_sibling_folder(computed_folder)
+                self._folder_redirect_cache[computed_key] = redirect or ""
+            if redirect:
+                final_path = str(Path(redirect) / formatted_parts[-1])
+                log.debug("reusing_existing_folder", folder=redirect)
 
         log.debug("success", final_path=final_path)
 
         return final_path
+
+    def _resolve_sibling_folder(self, computed_folder: Path) -> str | None:
+        """Find an existing sibling folder (same album, same release type) that
+        already holds audio, so a renamed-suffix duplicate isn't created."""
+        parent = computed_folder.parent
+        comp_norm = _norm_folder_name(computed_folder.name)
+        comp_rt_match = _RT_SUFFIX_RE.search(computed_folder.name)
+        comp_rt = comp_rt_match.group(1).upper() if comp_rt_match else ""
+        try:
+            for sibling in parent.iterdir():
+                if not sibling.is_dir() or sibling == computed_folder:
+                    continue
+                if _norm_folder_name(sibling.name) != comp_norm:
+                    continue
+                sib_rt_match = _RT_SUFFIX_RE.search(sibling.name)
+                sib_rt = sib_rt_match.group(1).upper() if sib_rt_match else ""
+                if sib_rt != comp_rt:
+                    continue
+                try:
+                    has_audio = any(
+                        f.suffix.lower() in _AUDIO_EXTS
+                        for f in sibling.iterdir()
+                        if f.is_file()
+                    )
+                except OSError:
+                    has_audio = False
+                if has_audio:
+                    return str(sibling)
+        except OSError:
+            pass
+        return None
 
     def get_music_video_final_path(
         self,

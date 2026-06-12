@@ -4,6 +4,7 @@ from typing import Any, AsyncGenerator, Callable
 import structlog
 
 from ..utils import safe_gather
+from .base import compute_release_type
 from .constants import VALID_URL_PATTERN
 from .enums import ArtistMediaType
 from .exceptions import (
@@ -210,23 +211,11 @@ class AppleMusicInterface:
 
         yield base_media
 
-        # Compute album-level release_type from catalog API data
-        _album_attrs = base_media.media_metadata.get("attributes", {})
-        _is_compilation = _album_attrs.get("isCompilation", False)
-        _is_single = _album_attrs.get("isSingle", False)
-        _track_count = _album_attrs.get("trackCount", 0)
-        _kind = (_album_attrs.get("playParams", {}) or {}).get("kind", "").lower()
-        _album_name = _album_attrs.get("name", "")
-        import re as _re
-        _is_ep_name = bool(_re.search(r'\s+-\s+EP\s*$', _album_name, _re.IGNORECASE))
-        if _is_compilation:
-            _album_release_type = "COMPILATION"
-        elif _is_single or _track_count == 1:
-            _album_release_type = "SINGLE"
-        elif _kind == "ep" or _is_ep_name:
-            _album_release_type = "EP"
-        else:
-            _album_release_type = "ALBUM"
+        # Compute album-level release_type once from catalog API data already
+        # in hand (no extra request), then propagate to every track below.
+        _album_release_type = compute_release_type(
+            base_media.media_metadata.get("attributes", {})
+        )
 
         tracks = base_media.media_metadata["relationships"]["tracks"]["data"]
         tasks = [

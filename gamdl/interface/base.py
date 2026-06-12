@@ -22,6 +22,24 @@ from .types import Cover, DecryptionKey, MediaRating, MediaTags, MediaType, Play
 
 logger = structlog.get_logger(__name__)
 
+_EP_NAME_RE = re.compile(r"\s+-\s+EP\s*$", re.IGNORECASE)
+
+
+def compute_release_type(attrs: dict) -> str:
+    """Classify an album's release type from its catalog attributes.
+
+    Shared by the per-track tag refinement (base interface) and the
+    album-level computation (interface) so the rules live in one place.
+    """
+    if attrs.get("isCompilation"):
+        return "COMPILATION"
+    if attrs.get("isSingle") or attrs.get("trackCount", 0) == 1:
+        return "SINGLE"
+    kind = (attrs.get("playParams", {}) or {}).get("kind", "").lower()
+    if kind == "ep" or _EP_NAME_RE.search(attrs.get("name", "")):
+        return "EP"
+    return "ALBUM"
+
 
 class AppleMusicBaseInterface:
     def __init__(
@@ -409,18 +427,9 @@ class AppleMusicBaseInterface:
         if playlist_id and tags.release_type == "ALBUM":
             try:
                 album_data = await self.get_album_cached(playlist_id)
-                attrs = album_data.get("attributes", {})
-                is_single = attrs.get("isSingle", False)
-                is_compilation = attrs.get("isCompilation", False)
-                kind = (attrs.get("playParams", {}) or {}).get("kind", "").lower()
-                album_name = attrs.get("name", "")
-                is_ep_name = bool(re.search(r'\s+-\s+EP\s*$', album_name, re.IGNORECASE))
-                if is_compilation:
-                    tags.release_type = "COMPILATION"
-                elif is_single or attrs.get("trackCount", 0) == 1:
-                    tags.release_type = "SINGLE"
-                elif kind == "ep" or is_ep_name:
-                    tags.release_type = "EP"
+                tags.release_type = compute_release_type(
+                    album_data.get("attributes", {})
+                )
             except Exception:
                 pass
 
