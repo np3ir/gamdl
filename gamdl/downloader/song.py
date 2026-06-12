@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 
 import structlog
@@ -6,6 +7,7 @@ from ..interface.enums import CoverFormat
 from ..interface.types import AppleMusicMedia, DecryptionKeyAv
 from .amdecrypt import decrypt_file_hex, decrypt_wrapper, write_decrypted_media
 from .base import AppleMusicBaseDownloader
+from .exceptions import GamdlDownloaderDecryptionError
 from .types import DownloadItem
 
 logger = structlog.get_logger(__name__)
@@ -106,22 +108,50 @@ class AppleMusicSongDownloader:
             staged_path=staged_path,
         )
 
-        if decryption_key:
-            await self._decrypt_amdecrypt_hex(
-                encrypted_path,
-                staged_path,
-                decryption_key.audio_track.key,
-                use_cenc=use_cenc,
-                use_single_content_key=use_single_content_key,
-            )
+        # Retry transient decrypt failures: the FairPlay wrapper session can
+        # drop mid-stream (expires in <24h) and a single hiccup shouldn't
+        # abort the track. Ported from the 3.5.1 fork (c6479a1).
+        max_attempts = 3
+        decrypt_timeout = 120
+        last_error = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                if decryption_key:
+                    await self._decrypt_amdecrypt_hex(
+                        encrypted_path,
+                        staged_path,
+                        decryption_key.audio_track.key,
+                        use_cenc=use_cenc,
+                        use_single_content_key=use_single_content_key,
+                    )
+                else:
+                    await asyncio.wait_for(
+                        self._decrypt_amdecrypt(
+                            encrypted_path,
+                            staged_path,
+                            media_id,
+                            fairplay_key,
+                            use_single_content_key=use_single_content_key,
+                        ),
+                        timeout=decrypt_timeout,
+                    )
+                break
+            except (
+                asyncio.IncompleteReadError,
+                TimeoutError,
+                EOFError,
+                OSError,
+            ) as e:
+                last_error = e
+                if attempt < max_attempts:
+                    log.warning(
+                        "decryption failed, retrying",
+                        attempt=attempt,
+                        error=str(e),
+                    )
+                    await asyncio.sleep(2)
         else:
-            await self._decrypt_amdecrypt(
-                encrypted_path,
-                staged_path,
-                media_id,
-                fairplay_key,
-                use_single_content_key=use_single_content_key,
-            )
+            raise GamdlDownloaderDecryptionError(str(last_error)) from last_error
 
         log.debug("success")
 

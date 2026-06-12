@@ -253,12 +253,6 @@ async def main(config: CliConfig):
             else:
                 expanded.append(url)
         urls = expanded
-        interactive_prompts = InteractivePrompts(
-            artist_auto_select=config.artist_auto_select * (
-                sum(1 for u in config.urls if "/artist/" in u)
-                or 1
-            ),
-        )
 
     error_count = 0
     for url_index, url in enumerate(urls, 1):

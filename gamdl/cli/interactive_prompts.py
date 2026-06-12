@@ -1,3 +1,5 @@
+import itertools
+
 from InquirerPy import inquirer
 from InquirerPy.base.control import Choice
 import m3u8
@@ -10,7 +12,11 @@ class InteractivePrompts:
         artist_auto_select: list[ArtistMediaType] | None = None,
     ):
         self.artist_auto_select = artist_auto_select
-        self._artist_auto_select_iter = iter(artist_auto_select) if artist_auto_select else None
+        # cycle: a single value applies to every artist URL; a CSV list repeats
+        # in order for each expanded artist URL without ever exhausting
+        self._artist_auto_select_iter = (
+            itertools.cycle(artist_auto_select) if artist_auto_select else None
+        )
 
     @staticmethod
     def millis_to_min_sec(millis) -> str:

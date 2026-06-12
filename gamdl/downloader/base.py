@@ -412,8 +412,16 @@ class AppleMusicBaseDownloader:
         process.start()
 
         try:
+            # Deadline so a hung yt-dlp child can't spin this loop forever;
+            # the finally block below terminates the process on the way out.
+            elapsed = 0.0
             while process.is_alive():
                 await asyncio.sleep(0.1)
+                elapsed += 0.1
+                if elapsed >= 300:
+                    raise TimeoutError(
+                        f"yt-dlp timed out after 300s: {stream_url}"
+                    )
 
             process.join()
 

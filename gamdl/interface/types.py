@@ -1,4 +1,5 @@
 import datetime
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -75,7 +76,13 @@ class MediaTags:
             "aART": self.album_artist,
             "plID": self.album_id,
             "soal": self.album_sort,
-            "\xa9ART": [a.strip() for a in self.artist.split(" / ")] if self.artist else None,
+            # Apple joins collaborators with " & " / ", "; the downloader uses " / ".
+            # Split on all three so the tag is truly multi-value per artist.
+            "\xa9ART": (
+                [a for a in (p.strip() for p in re.split(r" / |, | & ", self.artist)) if a]
+                if self.artist
+                else None
+            ),
             "atID": self.artist_id,
             "soar": self.artist_sort,
             "\xa9cmt": self.comment,
