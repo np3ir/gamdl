@@ -15,10 +15,16 @@ from .constants import (
     APPLE_MUSIC_HOMEPAGE_URL,
     APPLE_MUSIC_LIBRARY_ALBUM_API_URI,
     APPLE_MUSIC_LIBRARY_PLAYLIST_API_URI,
+    APPLE_MUSIC_LIBRARY_PLAYLISTS_API_URI,
     APPLE_MUSIC_LICENSE_API_URL,
+    APPLE_MUSIC_LIBRARY_MUSIC_VIDEO_API_URI,
     APPLE_MUSIC_MUSIC_VIDEO_API_URI,
+    APPLE_MUSIC_LIBRARY_ALBUMS_API_URI,
     APPLE_MUSIC_PLAYLIST_API_URI,
     APPLE_MUSIC_SEARCH_API_URI,
+    APPLE_MUSIC_LIBRARY_MUSIC_VIDEOS_API_URI,
+    APPLE_MUSIC_LIBRARY_SONG_API_URI,
+    APPLE_MUSIC_LIBRARY_SONGS_API_URI,
     APPLE_MUSIC_SONG_API_URI,
     APPLE_MUSIC_UPLOADED_VIDEO_API_URL,
     APPLE_MUSIC_WEBPLAYBACK_API_URL,
@@ -426,9 +432,54 @@ class AppleMusicApi:
 
         return artist
 
+    async def get_library_song(
+        self,
+        song_id: str,
+        include: str = "catalog",
+        extend: str = "extendedAssetUrls",
+    ) -> dict:
+        log = logger.bind(action="get_library_song", song_id=song_id)
+
+        song = await self._amp_request(
+            APPLE_MUSIC_LIBRARY_SONG_API_URI.format(
+                song_id=song_id,
+            ),
+            {
+                "include": include,
+                "extend": extend,
+            },
+        )
+
+        log.debug("success", song=song)
+
+        return song
+
+    async def get_library_music_video(
+        self,
+        music_video_id: str,
+        include: str = "catalog",
+    ) -> dict:
+        log = logger.bind(
+            action="get_library_music_video", music_video_id=music_video_id
+        )
+
+        music_video = await self._amp_request(
+            APPLE_MUSIC_LIBRARY_MUSIC_VIDEO_API_URI.format(
+                music_video_id=music_video_id,
+            ),
+            {
+                "include": include,
+            },
+        )
+
+        log.debug("success", music_video=music_video)
+
+        return music_video
+
     async def get_library_album(
         self,
         album_id: str,
+        include: str = "catalog",
         extend: str = "extendedAssetUrls",
     ) -> dict:
         log = logger.bind(action="get_library_album", album_id=album_id)
@@ -438,6 +489,7 @@ class AppleMusicApi:
                 album_id=album_id,
             ),
             {
+                "include": include,
                 "extend": extend,
             },
         )
@@ -449,7 +501,7 @@ class AppleMusicApi:
     async def get_library_playlist(
         self,
         playlist_id: str,
-        include: str = "tracks",
+        include: str = "catalog,tracks",
         limit: int = 100,
         extend: str = "extendedAssetUrls",
     ) -> dict:
@@ -469,6 +521,92 @@ class AppleMusicApi:
         log.debug("success", playlist=playlist)
 
         return playlist
+
+    async def get_library_songs(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        include: str = "catalog",
+        extend: str = "extendedAssetUrls",
+    ) -> dict:
+        log = logger.bind(action="get_library_songs")
+
+        library_songs = await self._amp_request(
+            APPLE_MUSIC_LIBRARY_SONGS_API_URI,
+            {
+                "limit": limit,
+                "offset": offset,
+                "include": include,
+                "extend": extend,
+            },
+        )
+
+        log.debug("success", library_songs=library_songs)
+
+        return library_songs
+
+    async def get_library_music_videos(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        include: str = "catalog",
+    ) -> dict:
+        log = logger.bind(action="get_library_music_videos")
+
+        library_music_videos = await self._amp_request(
+            APPLE_MUSIC_LIBRARY_MUSIC_VIDEOS_API_URI,
+            {
+                "limit": limit,
+                "offset": offset,
+                "include": include,
+            },
+        )
+
+        log.debug("success", library_music_videos=library_music_videos)
+
+        return library_music_videos
+
+    async def get_library_albums(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        include: str = "catalog",
+    ) -> dict:
+        log = logger.bind(action="get_library_albums")
+
+        library_albums = await self._amp_request(
+            APPLE_MUSIC_LIBRARY_ALBUMS_API_URI,
+            {
+                "limit": limit,
+                "offset": offset,
+                "include": include,
+            },
+        )
+
+        log.debug("success", library_albums=library_albums)
+
+        return library_albums
+
+    async def get_library_playlists(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        include: str = "catalog",
+    ) -> dict:
+        log = logger.bind(action="get_library_playlists")
+
+        library_playlists = await self._amp_request(
+            APPLE_MUSIC_LIBRARY_PLAYLISTS_API_URI,
+            {
+                "limit": limit,
+                "offset": offset,
+                "include": include,
+            },
+        )
+
+        log.debug("success", library_playlists=library_playlists)
+
+        return library_playlists
 
     async def get_search_results(
         self,
@@ -531,17 +669,26 @@ class AppleMusicApi:
     async def get_webplayback(
         self,
         track_id: str,
+        is_library: bool = False,
     ) -> dict:
         log = logger.bind(action="get_webplayback", track_id=track_id)
 
         response = None
+
+        if is_library:
+            request_body = {
+                "universalLibraryId": track_id,
+            }
+        else:
+            request_body = {
+                "salableAdamId": track_id,
+            }
+        request_body["language"] = self.language
+
         try:
             response = await self.client.post(
                 APPLE_MUSIC_WEBPLAYBACK_API_URL,
-                json={
-                    "salableAdamId": track_id,
-                    "language": self.language,
-                },
+                json=request_body,
             )
             response.raise_for_status()
             webplayback = response.json()

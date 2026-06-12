@@ -71,8 +71,8 @@ VALID_URL_PATTERN = re.compile(
     r"(?:\?i=(?P<sub_id>[0-9]+))?"
     r"|"
     r"(?:/(?P<library_storefront>[a-z]{2}))?"
-    r"/library/(?P<library_type>playlist|albums)"
-    r"/(?P<library_id>p\.[a-zA-Z0-9]+|l\.[a-zA-Z0-9]+)"
+    r"/library/(?P<library_type>playlist|albums|songs|music-videos)"
+    r"/(?P<library_id>[pli]\.[a-zA-Z0-9]+)"
     r")"
 )
 
@@ -95,7 +95,7 @@ ARTIST_AUTO_SELECT_STR_MAP = {
     "music-videos": "Music Videos",
 }
 
-SONG_CODEC_FLAVOR_MAP = {
+MEDIA_CODEC_FLAVOR_MAP = {
     "aac-web": "28:ctrp256",
     "aac-he-web": "32:ctrp64",
     "aac-fps-web": "30:cbcp256",

@@ -6,7 +6,7 @@ from .constants import (
     FOURCC_MAP,
     MEDIA_RATING_STR_MAP,
     MEDIA_TYPE_STR_MAP,
-    SONG_CODEC_FLAVOR_MAP,
+    MEDIA_CODEC_FLAVOR_MAP,
 )
 
 
@@ -68,7 +68,7 @@ class SongCodec(Enum):
 
     @property
     def flavor(self) -> str | None:
-        return SONG_CODEC_FLAVOR_MAP.get(self.value)
+        return MEDIA_CODEC_FLAVOR_MAP.get(self.value)
 
     @property
     def is_cenc(self) -> bool:
@@ -80,8 +80,9 @@ class MusicVideoCodec(Enum):
     H265 = "h265"
     ASK = "ask"
 
-    def fourcc(self) -> str:
-        return FOURCC_MAP[self.value]
+    @property
+    def fourcc(self) -> str | None:
+        return FOURCC_MAP.get(self.value)
 
 
 class MusicVideoResolution(Enum):

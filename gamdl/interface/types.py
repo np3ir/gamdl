@@ -134,6 +134,7 @@ class StreamInfo:
     codec: str = None
     width: int = None
     height: int = None
+    drm_free: bool = False
     use_cenc: bool = False
     use_single_content_key: bool = True
 
@@ -168,6 +169,7 @@ class Cover:
 @dataclass
 class AppleMusicMedia:
     media_id: str
+    is_library: bool = False
     index: int = 0
     total: int = 0
     partial: bool = True

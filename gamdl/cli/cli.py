@@ -190,6 +190,7 @@ async def main(config: CliConfig):
         music_video_file_template=config.music_video_file_template,
         temp_path=config.temp_path,
         nm3u8dlre_path=config.nm3u8dlre_path,
+        ffmpeg_path=config.ffmpeg_path,
         download_mode=config.download_mode,
         album_folder_template=config.album_folder_template,
         compilation_folder_template=config.compilation_folder_template,
