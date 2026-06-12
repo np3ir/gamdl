@@ -538,17 +538,15 @@ class AppleMusicSongInterface:
                 if not media.is_library
                 else None
             )
-            # Always fetch webplayback: since 2026-06-11 the wrapper playback
-            # asset metadata comes back sparse (no rating/genre/date/IDs),
-            # while the web API still returns the full field set. Tags below
-            # prefer webplayback for that reason; playback is the fallback.
-            try:
-                webplayback = await self.base.apple_music_api.get_webplayback(
+            webplayback = (
+                await self.base.apple_music_api.get_webplayback(
                     media.media_id,
                     media.is_library,
                 )
-            except Exception:
-                webplayback = None
+                if media.is_library
+                or any(codec.is_web for codec in self.codec_priority)
+                else None
+            )
         else:
             playback = None
             webplayback = await self.base.apple_music_api.get_webplayback(
@@ -556,14 +554,14 @@ class AppleMusicSongInterface:
                 media.is_library,
             )
 
-        if webplayback:
+        if playback:
             media.tags = await self.base.get_tags_from_asset_info(
-                webplayback["songList"][0]["assets"][0]["metadata"],
+                playback["songList"][0]["assets"][0]["metadata"],
                 media.lyrics.unsynced if media.lyrics else None,
             )
         else:
             media.tags = await self.base.get_tags_from_asset_info(
-                playback["songList"][0]["assets"][0]["metadata"],
+                webplayback["songList"][0]["assets"][0]["metadata"],
                 media.lyrics.unsynced if media.lyrics else None,
             )
 
