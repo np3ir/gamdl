@@ -7,9 +7,10 @@ from ..interface import ArtistMediaType
 class InteractivePrompts:
     def __init__(
         self,
-        artist_auto_select: ArtistMediaType | None = None,
+        artist_auto_select: list[ArtistMediaType] | None = None,
     ):
         self.artist_auto_select = artist_auto_select
+        self._artist_auto_select_iter = iter(artist_auto_select) if artist_auto_select else None
 
     @staticmethod
     def millis_to_min_sec(millis) -> str:
@@ -116,7 +117,7 @@ class InteractivePrompts:
         artist_metadata: dict,
     ) -> ArtistMediaType:
         if self.artist_auto_select:
-            return self.artist_auto_select
+            return next(self._artist_auto_select_iter)
 
         available_choices = []
         for media_types in media_types:

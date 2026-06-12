@@ -101,6 +101,7 @@ class AppleMusicInterface:
         total: int | None = None,
         media_metadata: dict | None = None,
         playlist_metadata: dict | None = None,
+        album_release_type: str | None = None,
     ) -> AsyncGenerator[AppleMusicMedia, None]:
         media = AppleMusicMedia(
             media_id=media_id,
@@ -116,6 +117,9 @@ class AppleMusicInterface:
 
         try:
             async for media in self.song.get_media(media):
+                # Override release_type with album-level value when downloading an album
+                if album_release_type and media.tags and not media.partial:
+                    media.tags.release_type = album_release_type
                 yield media
 
                 self._run_media_type_filter(media)
@@ -206,6 +210,24 @@ class AppleMusicInterface:
 
         yield base_media
 
+        # Compute album-level release_type from catalog API data
+        _album_attrs = base_media.media_metadata.get("attributes", {})
+        _is_compilation = _album_attrs.get("isCompilation", False)
+        _is_single = _album_attrs.get("isSingle", False)
+        _track_count = _album_attrs.get("trackCount", 0)
+        _kind = (_album_attrs.get("playParams", {}) or {}).get("kind", "").lower()
+        _album_name = _album_attrs.get("name", "")
+        import re as _re
+        _is_ep_name = bool(_re.search(r'\s+-\s+EP\s*$', _album_name, _re.IGNORECASE))
+        if _is_compilation:
+            _album_release_type = "COMPILATION"
+        elif _is_single or _track_count == 1:
+            _album_release_type = "SINGLE"
+        elif _kind == "ep" or _is_ep_name:
+            _album_release_type = "EP"
+        else:
+            _album_release_type = "ALBUM"
+
         tracks = base_media.media_metadata["relationships"]["tracks"]["data"]
         tasks = [
             (
@@ -214,6 +236,7 @@ class AppleMusicInterface:
                     index=index,
                     total=base_media.media_metadata["attributes"]["trackCount"],
                     media_metadata=track,
+                    album_release_type=_album_release_type,
                 )
                 if track["type"] in {"songs", "library-songs"}
                 else self._get_music_video_media(

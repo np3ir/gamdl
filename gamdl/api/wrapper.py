@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import struct
 from collections.abc import Awaitable, Callable
@@ -116,7 +117,15 @@ class WrapperApi:
 
         base_url = base_url.rstrip("/")
 
-        me = await cls.get_me(client, base_url)
+        for attempt in range(5):
+            try:
+                me = await cls.get_me(client, base_url)
+                break
+            except GamdlApiResponseError:
+                if attempt < 4:
+                    await asyncio.sleep(3)
+                else:
+                    raise
         if get_credentials_func is not None and me["auth"]["state"] == "logged_out":
             username, password = await _invoke(get_credentials_func)
             await cls.login(

@@ -242,7 +242,32 @@ class AppleMusicSongInterface:
             track=asset_data["trackNumber"],
             track_total=asset_data["trackCount"],
             xid=asset_data.get("xid"),
+            release_type=(
+                "COMPILATION" if asset_data.get("compilation")
+                else "SINGLE" if asset_data.get("trackCount", 0) == 1
+                else "ALBUM"
+            ),
         )
+
+        # Refine release_type using catalog API (detects EP via playParams.kind)
+        playlist_id = asset_data.get("playlistId")
+        if playlist_id and tags.release_type == "ALBUM":
+            try:
+                album_data = await self.base.get_album_cached(playlist_id)
+                attrs = album_data.get("attributes", {})
+                is_single = attrs.get("isSingle", False)
+                is_compilation = attrs.get("isCompilation", False)
+                kind = (attrs.get("playParams", {}) or {}).get("kind", "").lower()
+                album_name = attrs.get("name", "")
+                is_ep_name = bool(re.search(r'\s+-\s+EP\s*$', album_name, re.IGNORECASE))
+                if is_compilation:
+                    tags.release_type = "COMPILATION"
+                elif is_single or attrs.get("trackCount", 0) == 1:
+                    tags.release_type = "SINGLE"
+                elif kind == "ep" or is_ep_name:
+                    tags.release_type = "EP"
+            except Exception:
+                pass
 
         log.debug("success", tags=tags)
 
@@ -278,7 +303,7 @@ class AppleMusicSongInterface:
         if not stream_info:
             raise GamdlInterfaceFormatNotAvailableError(
                 media_id=media_id,
-                formats=[codec.value for codec in self.codec_priority],
+                codec=[codec.value for codec in self.codec_priority],
             )
 
         return stream_info
@@ -546,6 +571,49 @@ class AppleMusicSongInterface:
                     m3u8_master_url,
                     webplayback,
                 )
+
+        # Extract featured/guest artists from title and clean (matching OrpheusDL logic)
+        # Handles parens form: (feat. X), (ft. X), (featuring X), (with X), (con X)
+        # Handles dash form: - feat. X, - ft. X at end of title
+        if media.tags and media.tags.title:
+            _FEAT_KW = (
+                r"f(?:ea)?t\.?|featuring|with|duet\s+with|w/|"
+                r"con|junto\s+a|starring|prod\.?\s*by|prod\.?|&"
+            )
+            _COLLAB_PARENS = re.compile(
+                rf"\s*[\(\[]\s*(?:{_FEAT_KW})\s*([^\)\]]+)[\)\]]",
+                re.IGNORECASE,
+            )
+            _COLLAB_DASH = re.compile(
+                rf"\s+[-–]\s+(?:{_FEAT_KW})\s+(.+)$",
+                re.IGNORECASE,
+            )
+            artist_lower = (media.tags.artist or "").lower()
+
+            # Parens form — remove only if featured artist is already in artist string
+            for m in _COLLAB_PARENS.finditer(media.tags.title):
+                feat_parts = [p.strip() for p in re.split(r"[,&]", m.group(1)) if p.strip()]
+                for fp in feat_parts:
+                    if fp.lower() in artist_lower:
+                        media.tags.title = _COLLAB_PARENS.sub("", media.tags.title).strip()
+                        break
+                else:
+                    # Not in artist string — add it and then remove from title
+                    for fp in feat_parts:
+                        media.tags.artist = f"{media.tags.artist} & {fp}"
+                    media.tags.title = _COLLAB_PARENS.sub("", media.tags.title).strip()
+                    artist_lower = (media.tags.artist or "").lower()
+                media.tags.featured_artists = feat_parts
+                break
+
+            # Dash form — remove only if featured artist is already in artist string
+            m = _COLLAB_DASH.search(media.tags.title)
+            if m:
+                feat_parts = [p.strip() for p in re.split(r"[,&]", m.group(1)) if p.strip()]
+                for fp in feat_parts:
+                    if fp.lower() in artist_lower:
+                        media.tags.title = media.tags.title[:m.start()].strip()
+                        break
 
         if media.stream_info:
             if (

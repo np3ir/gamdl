@@ -346,7 +346,7 @@ class AppleMusicBaseInterface:
 
         tags = MediaTags(
             album=asset_data.get("playlistName"),
-            album_artist=asset_data.get("playlistArtistName"),
+            album_artist=asset_data.get("playlistArtistName") or asset_data.get("artistName"),
             album_id=(
                 int(asset_data["playlistId"]) if asset_data.get("playlistId") else None
             ),
@@ -392,7 +392,32 @@ class AppleMusicBaseInterface:
             track=asset_data.get("trackNumber"),
             track_total=asset_data.get("trackCount"),
             xid=asset_data.get("xid"),
+            release_type=(
+                "COMPILATION" if asset_data.get("compilation")
+                else "SINGLE" if asset_data.get("trackCount", 0) == 1
+                else "ALBUM"
+            ),
         )
+
+        # Refine release_type using catalog API (detects EP via playParams.kind)
+        playlist_id = asset_data.get("playlistId")
+        if playlist_id and tags.release_type == "ALBUM":
+            try:
+                album_data = await self.get_album_cached(playlist_id)
+                attrs = album_data.get("attributes", {})
+                is_single = attrs.get("isSingle", False)
+                is_compilation = attrs.get("isCompilation", False)
+                kind = (attrs.get("playParams", {}) or {}).get("kind", "").lower()
+                album_name = attrs.get("name", "")
+                is_ep_name = bool(re.search(r'\s+-\s+EP\s*$', album_name, re.IGNORECASE))
+                if is_compilation:
+                    tags.release_type = "COMPILATION"
+                elif is_single or attrs.get("trackCount", 0) == 1:
+                    tags.release_type = "SINGLE"
+                elif kind == "ep" or is_ep_name:
+                    tags.release_type = "EP"
+            except Exception:
+                pass
 
         log.debug("success", tags=tags)
 

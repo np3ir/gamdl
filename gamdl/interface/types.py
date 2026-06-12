@@ -42,6 +42,8 @@ class MediaTags:
     track: int = None
     track_total: int = None
     xid: str = None
+    featured_artists: list = None  # Featured artists extracted from title
+    release_type: str = None
 
     def as_mp4_tags(self, date_format: str = None) -> dict:
         disc_mp4 = [
@@ -73,7 +75,7 @@ class MediaTags:
             "aART": self.album_artist,
             "plID": self.album_id,
             "soal": self.album_sort,
-            "\xa9ART": self.artist,
+            "\xa9ART": [a.strip() for a in self.artist.split(" / ")] if self.artist else None,
             "atID": self.artist_id,
             "soar": self.artist_sort,
             "\xa9cmt": self.comment,
@@ -98,8 +100,11 @@ class MediaTags:
             "xid ": self.xid,
         }
 
+        _prebuilt_list = {"\xa9ART"}  # tags already built as list of strings
         return {
-            k: ([v] if not isinstance(v, bool) else v)
+            k: (v if isinstance(v, bool) else
+                v if k in _prebuilt_list else
+                [v])
             for k, v in mp4_tags.items()
             if v is not None
         }

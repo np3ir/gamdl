@@ -4,6 +4,7 @@ import queue
 import re
 import shutil
 import traceback
+import unicodedata
 from pathlib import Path
 
 import structlog
@@ -14,7 +15,7 @@ from ..interface.enums import CoverFormat
 from ..interface.interface import AppleMusicInterface
 from ..interface.types import MediaTags, PlaylistTags
 from ..utils import CustomStringFormatter, async_subprocess
-from .constants import ILLEGAL_CHAR_REPLACEMENT, ILLEGAL_CHARS_RE, TEMP_PATH_TEMPLATE
+from .constants import FULLWIDTH_REPLACEMENTS, ILLEGAL_CHAR_REPLACEMENT, ILLEGAL_CHARS_RE, TEMP_PATH_TEMPLATE
 from .enums import DownloadMode
 
 logger = structlog.get_logger(__name__)
@@ -49,6 +50,7 @@ class AppleMusicBaseDownloader:
         self,
         interface: AppleMusicInterface,
         output_path: str = "./Apple Music",
+        music_video_output_path: str = None,
         temp_path: str = ".",
         nm3u8dlre_path: str = "N_m3u8DL-RE",
         download_mode: DownloadMode = DownloadMode.YTDLP,
@@ -60,13 +62,19 @@ class AppleMusicBaseDownloader:
         multi_disc_file_template: str = "{disc}-{track:02d} {title}",
         no_album_file_template: str = "{title}",
         playlist_file_template: str = "{playlist_title}",
+        playlist_track_file_template: str = "{artists} - {title}{explicit}",
+        music_video_folder_template: str = "{artist_initials}/{album_artist}",
+        music_video_file_template: str = "({date:%Y}) {artists} - {title}{explicit}",
         date_tag_template: str = "%Y-%m-%dT%H:%M:%SZ",
         exclude_tags: list[str] = None,
         truncate: int = None,
         silent: bool = False,
+        artist_separator: str = " & ",
+        use_fullwidth_replacements: bool = True,
     ):
         self.interface = interface
         self.output_path = output_path
+        self.music_video_output_path = music_video_output_path or output_path
         self.temp_path = temp_path
         self.nm3u8dlre_path = nm3u8dlre_path
         self.download_mode = download_mode
@@ -78,10 +86,18 @@ class AppleMusicBaseDownloader:
         self.playlist_folder_template = playlist_folder_template
         self.no_album_file_template = no_album_file_template
         self.playlist_file_template = playlist_file_template
+        self.playlist_track_file_template = playlist_track_file_template
+        self.music_video_folder_template = music_video_folder_template
+        self.music_video_file_template = music_video_file_template
         self.date_tag_template = date_tag_template
         self.exclude_tags = exclude_tags
         self.truncate = truncate
         self.silent = silent
+        # Strip surrounding quotes so config.ini values like " / " work correctly
+        self.artist_separator = (
+            artist_separator.strip("\"'") if isinstance(artist_separator, str) else " & "
+        )
+        self.use_fullwidth_replacements = use_fullwidth_replacements
 
         self._initialize_binary_paths()
 
@@ -114,16 +130,46 @@ class AppleMusicBaseDownloader:
 
         return temp_path
 
+    def _get_artist_initials(self, name: str) -> str:
+        """Return first ASCII letter of name, or '#' for non-Latin (matching OrpheusDL)."""
+        ch = (name or "").strip()[:1].upper()
+        if not ch:
+            return "#"
+        normalized = "".join(
+            c for c in unicodedata.normalize("NFD", ch)
+            if unicodedata.category(c) != "Mn"
+        )
+        return normalized if "A" <= normalized <= "Z" else "#"
+
+    def _apply_artist_separator(self, artist_str: str, featured: list = None) -> str:
+        """Split and rejoin artists in alphabetical order for cross-platform consistency."""
+        if not artist_str:
+            return artist_str
+
+        all_parts = []
+        for segment in re.split(r" & ", artist_str):
+            all_parts.extend(re.split(r", ", segment))
+        all_parts = [p.strip() for p in all_parts if p.strip()]
+
+        return self.artist_separator.join(sorted(all_parts))
+
     def _sanitize_string(
         self,
         dirty_string: str,
         file_ext: str = None,
     ) -> str:
-        sanitized_string = re.sub(
-            ILLEGAL_CHARS_RE,
-            ILLEGAL_CHAR_REPLACEMENT,
-            dirty_string,
-        )
+        # Strip control characters (ASCII 0-31) — illegal in Windows filenames
+        sanitized_string = re.sub(r"[\x00-\x1f]", "", dirty_string)
+
+        if self.use_fullwidth_replacements:
+            for char, replacement in FULLWIDTH_REPLACEMENTS.items():
+                sanitized_string = sanitized_string.replace(char, replacement)
+        else:
+            sanitized_string = re.sub(
+                ILLEGAL_CHARS_RE,
+                ILLEGAL_CHAR_REPLACEMENT,
+                sanitized_string,
+            )
 
         if file_ext is None:
             sanitized_string = sanitized_string[: self.truncate]
@@ -144,41 +190,76 @@ class AppleMusicBaseDownloader:
     ) -> str:
         log = logger.bind(action="get_final_path")
 
-        if tags.album:
+        if playlist_tags:
+            template_folder_parts = self.playlist_folder_template.split("/")
+            template_file_parts = self.playlist_track_file_template.split("/")
+        elif tags.album:
             template_folder_parts = (
                 self.compilation_folder_template.split("/")
                 if tags.compilation
                 else self.album_folder_template.split("/")
             )
-        else:
-            template_folder_parts = self.no_album_folder_template.split("/")
-
-        if tags.album:
             template_file_parts = (
                 self.multi_disc_file_template.split("/")
                 if isinstance(tags.disc_total, int) and tags.disc_total > 1
                 else self.single_disc_file_template.split("/")
             )
         else:
+            template_folder_parts = self.no_album_folder_template.split("/")
             template_file_parts = self.no_album_file_template.split("/")
 
         template_parts = template_folder_parts + template_file_parts
         formatted_parts = []
+
+        _artists = self._apply_artist_separator(
+            tags.artist or "",
+            featured=getattr(tags, "featured_artists", None),
+        )
+        _album_artists = self._apply_artist_separator(tags.album_artist or "")
+        _explicit = (
+            " (explicit)" if tags.rating is not None and tags.rating.value == 1 else ""
+        )
+        _album_clean = re.sub(
+            r"\s*-\s*(?:Single|EP|Single Version|Deluxe Edition|Deluxe Version|"
+            r"Expanded Edition|Special Edition|Remastered|Remaster)\s*$",
+            "",
+            tags.album or "",
+            flags=re.IGNORECASE,
+        ).strip() if tags.album else None
+        # Strip parenthetical explicit/clean suffixes: "(Explicit)" / "(Clean)"
+        _album_clean = re.sub(
+            r"\s*\((Explicit|Clean)\)\s*$", "", _album_clean or "", flags=re.IGNORECASE
+        ).strip() or _album_clean
+        # Strip artist mention suffixes from album names:
+        # (feat. X), (ft. X), (featuring X), (with X), (duet with X), (con X), (& X)
+        _feat_kw = r"f(?:ea)?t\.?|featuring|with|duet\s+with|w/|con|junto\s+a|starring|prod\.?\s*by|prod\.?|&"
+        _album_clean = re.sub(
+            rf"\s*[\(\[]\s*(?:{_feat_kw})\s*[^\)\]]+[\)\]]\s*$",
+            "", _album_clean or "", flags=re.IGNORECASE
+        ).strip() or _album_clean
+
+        _artist_initials = self._get_artist_initials(tags.album_artist or tags.artist)
+        _release = getattr(tags, "release_type", None) or "ALBUM"
 
         for i, part in enumerate(template_parts):
             is_folder = i < len(template_parts) - 1
             formatted_part = CustomStringFormatter().format(
                 part,
                 album=(tags.album, "Unknown Album"),
-                album_artist=(tags.album_artist, "Unknown Artist"),
+                album_clean=(_album_clean, "Unknown Album"),
+                album_artist=(_album_artists or tags.album_artist, "Unknown Artist"),
+                artist_initials=(_artist_initials, "#"),
                 album_id=(tags.album_id, "Unknown Album ID"),
-                artist=(tags.artist, "Unknown Artist"),
+                artist=(_artists or tags.artist, "Unknown Artist"),
                 artist_id=(tags.artist_id, "Unknown Artist ID"),
+                artists=(_artists, "Unknown Artist"),
+                release=(_release, "ALBUM"),
                 composer=(tags.composer, "Unknown Composer"),
                 composer_id=(tags.composer_id, "Unknown Composer ID"),
                 date=(tags.date, "Unknown Date"),
                 disc=(tags.disc, ""),
                 disc_total=(tags.disc_total, ""),
+                explicit=(_explicit, ""),
                 media_type=(tags.media_type, "Unknown Media Type"),
                 playlist_artist=(
                     (playlist_tags.artist if playlist_tags else None),
@@ -209,8 +290,103 @@ class AppleMusicBaseDownloader:
 
         final_path = str(Path(self.output_path, *formatted_parts))
 
+        # If the computed album folder doesn't exist yet, check if a sibling folder
+        # with the same album name (ignoring release type suffixes) already has audio
+        # files — if so, reuse that folder to avoid duplicates.
+        if not playlist_tags and tags.album:
+            computed_folder = Path(self.output_path, *formatted_parts[:-1])
+            if not computed_folder.exists():
+                parent = computed_folder.parent
+                _audio_exts = {".m4a", ".flac", ".mp3", ".ogg", ".opus", ".wav", ".mp4", ".m4v"}
+                _rt_re = re.compile(
+                    r"\s*\((ALBUM|SINGLE|EP|COMPILATION|ANTHOLOGY)\)\s*$", re.IGNORECASE
+                )
+
+                def _norm(s: str) -> str:
+                    s = _rt_re.sub("", s).strip()
+                    decomposed = unicodedata.normalize("NFD", s)
+                    return "".join(
+                        c for c in decomposed if unicodedata.category(c) != "Mn"
+                    ).lower().strip()
+
+                comp_norm = _norm(computed_folder.name)
+                # Extract computed release type from folder name for comparison
+                comp_rt_match = _rt_re.search(computed_folder.name)
+                comp_rt = comp_rt_match.group(1).upper() if comp_rt_match else ""
+                try:
+                    for sibling in parent.iterdir():
+                        if not sibling.is_dir() or sibling == computed_folder:
+                            continue
+                        if _norm(sibling.name) != comp_norm:
+                            continue
+                        # Only redirect if sibling has the same release type
+                        sib_rt_match = _rt_re.search(sibling.name)
+                        sib_rt = sib_rt_match.group(1).upper() if sib_rt_match else ""
+                        if sib_rt != comp_rt:
+                            continue
+                        try:
+                            has_audio = any(
+                                f.suffix.lower() in _audio_exts
+                                for f in sibling.iterdir()
+                                if f.is_file()
+                            )
+                        except OSError:
+                            has_audio = False
+                        if has_audio:
+                            final_path = str(sibling / formatted_parts[-1])
+                            log.debug("reusing_existing_folder", folder=str(sibling))
+                            break
+                except OSError:
+                    pass
+
         log.debug("success", final_path=final_path)
 
+        return final_path
+
+    def get_music_video_final_path(
+        self,
+        tags: MediaTags,
+        file_extension: str,
+    ) -> str:
+        log = logger.bind(action="get_music_video_final_path")
+
+        template_parts = (
+            self.music_video_folder_template.split("/")
+            + self.music_video_file_template.split("/")
+        )
+
+        _artist_initials = self._get_artist_initials(tags.album_artist or tags.artist)
+        _artists = self._apply_artist_separator(
+            tags.artist or "",
+            featured=getattr(tags, "featured_artists", None),
+        )
+        _album_artists = self._apply_artist_separator(tags.album_artist or "")
+        _explicit = (
+            " (explicit)" if tags.rating is not None and tags.rating.value == 1 else ""
+        )
+
+        formatted_parts = []
+        for i, part in enumerate(template_parts):
+            is_folder = i < len(template_parts) - 1
+            formatted_part = CustomStringFormatter().format(
+                part,
+                album=(tags.album, "Unknown Album"),
+                album_artist=(_album_artists or tags.album_artist, "Unknown Artist"),
+                artist_initials=(_artist_initials, "#"),
+                artist=(_artists or tags.artist, "Unknown Artist"),
+                artists=(_artists, "Unknown Artist"),
+                date=(tags.date, "Unknown Date"),
+                explicit=(_explicit, ""),
+                title=(tags.title, "Unknown Title"),
+            )
+            sanitized = self._sanitize_string(
+                formatted_part,
+                file_extension if not is_folder else None,
+            )
+            formatted_parts.append(sanitized)
+
+        final_path = str(Path(self.music_video_output_path, *formatted_parts))
+        log.debug("success", final_path=final_path)
         return final_path
 
     async def download_stream(self, stream_url: str, download_path: str):

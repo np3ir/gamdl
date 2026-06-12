@@ -1,15 +1,25 @@
 import asyncio
+import io
+import random
+import sys
 from functools import wraps
 from pathlib import Path
+
+# Force UTF-8 on Windows console to handle fullwidth characters (／ etc.)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 import click
 import colorama
 import structlog
 from dataclass_click import dataclass_click
-from httpx import ConnectError
+from httpx import ConnectError, NetworkError, ReadTimeout, TimeoutException
 
 from .. import __version__
 from ..api import AppleMusicApi
+from ..api.exceptions import GamdlApiResponseError
 from ..api.wrapper import WrapperApi
 from ..downloader import (
     AppleMusicBaseDownloader,
@@ -17,6 +27,7 @@ from ..downloader import (
     AppleMusicMusicVideoDownloader,
     AppleMusicSongDownloader,
     AppleMusicUploadedVideoDownloader,
+    GamdlDownloaderDecryptionError,
     GamdlDownloaderDependencyNotFoundError,
     GamdlDownloaderMediaFileExistsError,
     GamdlDownloaderSyncedLyricsOnlyError,
@@ -117,7 +128,7 @@ async def main(config: CliConfig):
         )
 
     if (
-        any(not codec.is_web for codec in config.song_codec_piority)
+        any(not codec.is_web for codec in config.song_codec_priority)
         and not config.use_wrapper
     ):
         logger.warning(
@@ -144,7 +155,7 @@ async def main(config: CliConfig):
     song_interface = AppleMusicSongInterface(
         base=base_interface,
         synced_lyrics_format=config.synced_lyrics_format,
-        codec_priority=config.song_codec_piority,
+        codec_priority=config.song_codec_priority,
         use_album_date=config.use_album_date,
         skip_stream_info=config.synced_lyrics_only,
         ask_codec_function=interactive_prompts.ask_song_codec,
@@ -174,6 +185,9 @@ async def main(config: CliConfig):
     base_downloader = AppleMusicBaseDownloader(
         interface=interface,
         output_path=config.output_path,
+        music_video_output_path=config.music_video_output_path,
+        music_video_folder_template=config.music_video_folder_template,
+        music_video_file_template=config.music_video_file_template,
         temp_path=config.temp_path,
         nm3u8dlre_path=config.nm3u8dlre_path,
         download_mode=config.download_mode,
@@ -185,9 +199,12 @@ async def main(config: CliConfig):
         multi_disc_file_template=config.multi_disc_file_template,
         no_album_file_template=config.no_album_file_template,
         playlist_file_template=config.playlist_file_template,
+        playlist_track_file_template=config.playlist_track_file_template,
         date_tag_template=config.date_tag_template,
         exclude_tags=config.exclude_tags,
         truncate=config.truncate,
+        artist_separator=config.artist_separator,
+        use_fullwidth_replacements=config.use_fullwidth_replacements,
     )
 
     song_downloader = AppleMusicSongDownloader(
@@ -226,6 +243,22 @@ async def main(config: CliConfig):
         urls = urls_from_file
     else:
         urls = config.urls
+
+    # Expand artist URLs when multiple media types are selected
+    if config.artist_auto_select and len(config.artist_auto_select) > 1:
+        expanded = []
+        for url in urls:
+            if "/artist/" in url:
+                expanded.extend([url] * len(config.artist_auto_select))
+            else:
+                expanded.append(url)
+        urls = expanded
+        interactive_prompts = InteractivePrompts(
+            artist_auto_select=config.artist_auto_select * (
+                sum(1 for u in config.urls if "/artist/" in u)
+                or 1
+            ),
+        )
 
     error_count = 0
     for url_index, url in enumerate(urls, 1):
@@ -268,6 +301,19 @@ async def main(config: CliConfig):
 
                 try:
                     await downloader.download(download_item)
+                    if (
+                        config.inter_track_delay_min > 0
+                        or config.inter_track_delay_max > 0
+                    ):
+                        delay = random.uniform(
+                            config.inter_track_delay_min,
+                            max(
+                                config.inter_track_delay_max,
+                                config.inter_track_delay_min,
+                            ),
+                        )
+                        logger.debug(f"Pausing {delay:.1f}s between tracks...")
+                        await asyncio.sleep(delay)
                 except (
                     GamdlInterfaceMediaNotStreamableError,
                     GamdlInterfaceFormatNotAvailableError,
@@ -276,7 +322,14 @@ async def main(config: CliConfig):
                     GamdlDownloaderSyncedLyricsOnlyError,
                     GamdlDownloaderMediaFileExistsError,
                     GamdlDownloaderDependencyNotFoundError,
+                    GamdlDownloaderDecryptionError,
                     GamdlInterfaceFlatFilterExcludedError,
+                    GamdlApiResponseError,
+                    TimeoutError,
+                    ConnectError,
+                    OSError,
+                    TimeoutException,
+                    NetworkError,
                 ) as e:
                     track_log.warning(f'Skipping "{media_title}": {e}')
                     continue
@@ -300,5 +353,19 @@ async def main(config: CliConfig):
             url_log.exception(f'Error processing "{url}": {e}')
             error_count += 1
             continue
+
+        if (
+            url_index < len(urls)
+            and (
+                config.inter_album_delay_min > 0
+                or config.inter_album_delay_max > 0
+            )
+        ):
+            delay = random.uniform(
+                config.inter_album_delay_min,
+                max(config.inter_album_delay_max, config.inter_album_delay_min),
+            )
+            logger.info(f"Pausing {delay:.1f}s between albums...")
+            await asyncio.sleep(delay)
 
     logger.info(f"Finished with {error_count} error(s)")

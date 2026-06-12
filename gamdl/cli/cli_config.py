@@ -114,12 +114,12 @@ class CliConfig:
         ),
     ]
     artist_auto_select: Annotated[
-        ArtistMediaType | None,
+        list[ArtistMediaType] | None,
         option(
             "--artist-auto-select",
             help="Automatically select artist content to download (only for artist URLs)",
             default=None,
-            type=ArtistMediaType,
+            type=Csv(ArtistMediaType),
         ),
     ]
     database_path: Annotated[
@@ -229,7 +229,7 @@ class CliConfig:
             type=SyncedLyricsFormat,
         ),
     ]
-    song_codec_piority: Annotated[
+    song_codec_priority: Annotated[
         list[SongCodec],
         option(
             "--song-codec-priority",
@@ -289,6 +289,36 @@ class CliConfig:
                 writable=True,
                 resolve_path=True,
             ),
+        ),
+    ]
+    music_video_output_path: Annotated[
+        str,
+        option(
+            "--music-video-output-path",
+            help="Music video output directory path (defaults to output_path)",
+            default=None,
+            type=click.Path(
+                file_okay=False,
+                dir_okay=True,
+                writable=True,
+                resolve_path=True,
+            ),
+        ),
+    ]
+    music_video_folder_template: Annotated[
+        str,
+        option(
+            "--music-video-folder-template",
+            help="Music video folder template",
+            default=base_downloader_sig.parameters["music_video_folder_template"].default,
+        ),
+    ]
+    music_video_file_template: Annotated[
+        str,
+        option(
+            "--music-video-file-template",
+            help="Music video file template",
+            default=base_downloader_sig.parameters["music_video_file_template"].default,
         ),
     ]
     temp_path: Annotated[
@@ -388,6 +418,30 @@ class CliConfig:
             default=base_downloader_sig.parameters["playlist_file_template"].default,
         ),
     ]
+    playlist_track_file_template: Annotated[
+        str,
+        option(
+            "--playlist-track-file-template",
+            help="Track filename template when downloading playlists",
+            default=base_downloader_sig.parameters["playlist_track_file_template"].default,
+        ),
+    ]
+    artist_separator: Annotated[
+        str,
+        option(
+            "--artist-separator",
+            help="Separator between multiple artists",
+            default=base_downloader_sig.parameters["artist_separator"].default,
+        ),
+    ]
+    use_fullwidth_replacements: Annotated[
+        bool,
+        option(
+            "--use-fullwidth-replacements/--no-fullwidth-replacements",
+            help="Replace illegal filename characters with full-width Unicode equivalents",
+            default=base_downloader_sig.parameters["use_fullwidth_replacements"].default,
+        ),
+    ]
     date_tag_template: Annotated[
         str,
         option(
@@ -463,5 +517,37 @@ class CliConfig:
             "--synced-lyrics-only",
             help="Download only synced lyrics",
             is_flag=True,
+        ),
+    ]
+    inter_track_delay_min: Annotated[
+        float,
+        option(
+            "--inter-track-delay-min",
+            help="Minimum delay in seconds between tracks",
+            default=10.0,
+        ),
+    ]
+    inter_track_delay_max: Annotated[
+        float,
+        option(
+            "--inter-track-delay-max",
+            help="Maximum delay in seconds between tracks",
+            default=20.0,
+        ),
+    ]
+    inter_album_delay_min: Annotated[
+        float,
+        option(
+            "--inter-album-delay-min",
+            help="Minimum delay in seconds between albums/URLs",
+            default=30.0,
+        ),
+    ]
+    inter_album_delay_max: Annotated[
+        float,
+        option(
+            "--inter-album-delay-max",
+            help="Maximum delay in seconds between albums/URLs",
+            default=60.0,
         ),
     ]

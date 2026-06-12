@@ -54,7 +54,15 @@ class AppleMusicMusicVideoInterface:
             "music-video",
             url_media_id,
         )
-        return itunes_page["storePlatformData"]["product-dv"]["results"][url_media_id]
+        store_data = itunes_page["storePlatformData"]
+        # Key varies by content type: "product-dv" for music videos, others possible
+        product_key = next(
+            (k for k in ("product-dv", "product-eiv", "product") if k in store_data),
+            None,
+        )
+        if not product_key:
+            raise KeyError(f"No recognized product key in storePlatformData: {list(store_data.keys())}")
+        return store_data[product_key]["results"][url_media_id]
 
     def _get_m3u8_master_url_from_webplayback(self, webplayback: dict) -> str:
         m3u8_master_url = webplayback["hls-playlist-url"]
@@ -115,6 +123,7 @@ class AppleMusicMusicVideoInterface:
 
         tags = MediaTags(
             artist=lookup_metadata[0]["artistName"],
+            album_artist=lookup_metadata[0]["artistName"],
             artist_id=int(lookup_metadata[0]["artistId"]),
             copyright=itunes_page_metadata.get("copyright"),
             date=self.base.parse_date(lookup_metadata[0]["releaseDate"]),

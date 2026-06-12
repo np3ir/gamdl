@@ -57,10 +57,9 @@ class AppleMusicMusicVideoDownloader:
             "." + media.stream_info.file_format.value,
         )
 
-        download_item.final_path = self.base.get_final_path(
+        download_item.final_path = self.base.get_music_video_final_path(
             media.tags,
             "." + media.stream_info.file_format.value,
-            media.playlist_tags,
         )
 
         if media.playlist_tags:
