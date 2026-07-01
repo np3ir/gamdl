@@ -22,6 +22,15 @@ from .enums import DownloadMode
 
 logger = structlog.get_logger(__name__)
 
+# Max artists rendered in a file NAME before the tail collapses into "& others".
+# Compilation tracks can list 20+ artists which, joined into the filename, blow
+# past Windows MAX_PATH (260 chars) and make the file unopenable in players that
+# aren't long-path-aware. Only the name is capped (_apply_artist_separator, used
+# solely by get_final_path); the ARTIST tag is written from tags.artist, so every
+# artist is still tagged. Parity with the tiddl / OrpheusDL / deemix / QBDLX forks.
+MAX_ARTISTS_IN_NAME = 3
+OTHERS_SUFFIX = " & others"
+
 # Compiled once at import instead of per-track inside get_final_path.
 _ALBUM_CLEAN_SUFFIX_RE = re.compile(
     r"\s*-\s*(?:Single|EP|Single Version|Deluxe Edition|Deluxe Version|"
@@ -212,7 +221,13 @@ class AppleMusicBaseDownloader:
             all_parts.extend(re.split(r", ", segment))
         all_parts = [p.strip() for p in all_parts if p.strip()]
 
-        return self.artist_separator.join(sorted(all_parts))
+        parts = sorted(all_parts)
+        # Cap the NAME only (the ARTIST tag is written from tags.artist): render
+        # the first N artists + "& others" so huge lists don't blow MAX_PATH.
+        if len(parts) > MAX_ARTISTS_IN_NAME:
+            return self.artist_separator.join(parts[:MAX_ARTISTS_IN_NAME]) + OTHERS_SUFFIX
+
+        return self.artist_separator.join(parts)
 
     def _sanitize_string(
         self,

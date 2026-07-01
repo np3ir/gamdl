@@ -6,3 +6,7 @@ __pycache__
 !pyproject.toml
 !README.md
 !uv.lock
+
+# Local timestamped backups (added 2026-07-01)
+*.bak
+*.bak_*
