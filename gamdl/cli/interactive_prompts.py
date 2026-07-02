@@ -168,6 +168,13 @@ class InteractivePrompts:
         self,
         albums: list[dict],
     ) -> list[dict]:
+        # Sort oldest-release-first (undated/malformed entries sort last) instead
+        # of trusting whatever order Apple's artist/albums relationship returns.
+        albums = sorted(
+            albums,
+            key=lambda album: (album.get("attributes") or {}).get("releaseDate") or "9999-99-99",
+        )
+
         if self.artist_auto_select:
             return albums
 
