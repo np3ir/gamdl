@@ -3,6 +3,7 @@ import base64
 import datetime
 import json
 import re
+import unicodedata
 from typing import AsyncGenerator, Callable
 from xml.dom import minidom
 from xml.etree import ElementTree
@@ -588,13 +589,25 @@ class AppleMusicSongInterface:
                 rf"\s+[-–]\s+(?:{_FEAT_KW})\s+(.+)$",
                 re.IGNORECASE,
             )
-            artist_lower = (media.tags.artist or "").lower()
+
+            def _fold(s: str) -> str:
+                # Strip diacritics for loose comparison — some catalogs spell
+                # the same artist inconsistently between the title's
+                # "(feat. ...)" clause and the main artist string (e.g.
+                # "Raúl" vs "Raül"), which an accent-sensitive `in` check
+                # would miss, leaving a redundant feat. clause in the title.
+                return "".join(
+                    c for c in unicodedata.normalize("NFKD", s)
+                    if not unicodedata.combining(c)
+                )
+
+            artist_lower = _fold((media.tags.artist or "").lower())
 
             # Parens form — remove only if featured artist is already in artist string
             for m in _COLLAB_PARENS.finditer(media.tags.title):
                 feat_parts = [p.strip() for p in re.split(r"[,&]", m.group(1)) if p.strip()]
                 for fp in feat_parts:
-                    if fp.lower() in artist_lower:
+                    if _fold(fp.lower()) in artist_lower:
                         media.tags.title = _COLLAB_PARENS.sub("", media.tags.title).strip()
                         break
                 else:
@@ -602,7 +615,7 @@ class AppleMusicSongInterface:
                     for fp in feat_parts:
                         media.tags.artist = f"{media.tags.artist} & {fp}"
                     media.tags.title = _COLLAB_PARENS.sub("", media.tags.title).strip()
-                    artist_lower = (media.tags.artist or "").lower()
+                    artist_lower = _fold((media.tags.artist or "").lower())
                 media.tags.featured_artists = feat_parts
                 break
 
@@ -611,7 +624,7 @@ class AppleMusicSongInterface:
             if m:
                 feat_parts = [p.strip() for p in re.split(r"[,&]", m.group(1)) if p.strip()]
                 for fp in feat_parts:
-                    if fp.lower() in artist_lower:
+                    if _fold(fp.lower()) in artist_lower:
                         media.tags.title = media.tags.title[:m.start()].strip()
                         break
 
