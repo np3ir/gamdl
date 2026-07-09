@@ -1,5 +1,8 @@
 # Gamdl (Glomatico's Apple Music Downloader)
 
+> [!WARNING]
+> **This app is for personal, educational, and archival purposes only.** It is not affiliated with Apple Music. Users must ensure their use complies with Apple Music's terms of service and all applicable local copyright laws. Downloaded content is for personal use and may not be shared or redistributed. The developer assumes no responsibility for misuse of this app.
+
 [![PyPI version](https://img.shields.io/pypi/v/gamdl?color=blue)](https://pypi.org/project/gamdl/)
 [![Python versions](https://img.shields.io/pypi/pyversions/gamdl)](https://pypi.org/project/gamdl/)
 [![License](https://img.shields.io/github/license/glomatico/gamdl)](https://github.com/glomatico/gamdl/blob/main/LICENSE)
