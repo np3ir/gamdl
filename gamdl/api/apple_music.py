@@ -79,7 +79,15 @@ class AppleMusicApi:
         log = logger.bind(action="get_token")
 
         response = None
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(
+            transport=RetryTransport(
+                retry=Retry(
+                    total=5,
+                    backoff_factor=1,
+                    status_forcelist=[429, 500, 502, 503, 504],
+                )
+            ),
+        ) as client:
             try:
                 response = await client.get(
                     APPLE_MUSIC_HOMEPAGE_URL,
@@ -138,7 +146,15 @@ class AppleMusicApi:
         log = logger.bind(action="get_account_info", meta=meta)
 
         response = None
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(
+            transport=RetryTransport(
+                retry=Retry(
+                    total=5,
+                    backoff_factor=1,
+                    status_forcelist=[429, 500, 502, 503, 504],
+                )
+            ),
+        ) as client:
             try:
                 response = await client.get(
                     APPLE_MUSIC_AMP_API_URL + APPLE_MUSIC_ACCOUNT_INFO_API_URI,
