@@ -223,8 +223,8 @@ class AppleMusicBaseInterface:
     async def get_cover_bytes(self, cover_url: str) -> bytes | None:
         log = logger.bind(action="get_cover_bytes", cover_url=cover_url)
 
-        async with httpx.AsyncClient() as client:
-            response = await client.get(cover_url)
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(cover_url, follow_redirects=True)
 
             if response.status_code == 404:
                 log.debug("cover_not_found")
@@ -363,6 +363,17 @@ class AppleMusicBaseInterface:
             action="get_tags_from_asset_info", asset_id=asset_data["itemId"]
         )
 
+        date = None
+
+        if use_album_date:
+            if asset_data.get("playlistId"):
+                date = await self.get_media_date(asset_data["playlistId"])
+            else:
+                log.debug("no_playlist_id_for_album_date")
+
+        if date is None and asset_data.get("releaseDate"):
+            date = self.parse_date(asset_data["releaseDate"])
+
         tags = MediaTags(
             album=asset_data.get("playlistName"),
             album_artist=asset_data.get("playlistArtistName") or asset_data.get("artistName"),
@@ -385,15 +396,7 @@ class AppleMusicBaseInterface:
             ),
             composer_sort=asset_data.get("sort-composer"),
             copyright=asset_data.get("copyright"),
-            date=(
-                await self.get_media_date(asset_data["playlistId"])
-                if use_album_date
-                else (
-                    self.parse_date(asset_data["releaseDate"])
-                    if asset_data.get("releaseDate")
-                    else None
-                )
-            ),
+            date=date,
             disc=asset_data.get("discNumber"),
             disc_total=asset_data.get("discCount"),
             gapless=asset_data.get("gapless"),

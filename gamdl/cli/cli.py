@@ -97,6 +97,8 @@ async def main(config: CliConfig):
         try:
             wrapper_api = await WrapperApi.create(
                 base_url=config.wrapper_url,
+                decrypt_host=config.wrapper_decrypt_host,
+                decrypt_port=config.wrapper_decrypt_port,
                 get_credentials_func=InteractivePrompts.get_wrapper_credentials,
                 get_2fa_code=InteractivePrompts.get_wrapper_2fa_code,
             )
@@ -133,9 +135,9 @@ async def main(config: CliConfig):
         and not config.use_wrapper
     ):
         logger.warning(
-            "You have chosen an experimental song codec "
-            "without enabling wrapper. "
-            "They're not guaranteed to work due to API limitations."
+            "You have chosen ALAC without enabling wrapper. "
+            "ALAC may be attempted without wrapper, but it probably won't work due "
+            "to API limitations."
         )
 
     if config.database_path:

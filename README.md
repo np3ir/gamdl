@@ -35,24 +35,17 @@ A command-line app for downloading Apple Music songs, music videos and post vide
 
 #### Wrapper
 
-Run the [Wrapper v2](https://github.com/glomatico/wrapper-v2) server for wrapper-backed account, playback, and decryption requests. Enable it with `--use-wrapper` or `use_wrapper = true`, and configure the base URL with `--wrapper-url` or `wrapper_url`.
+Run the [Wrapper v2](https://github.com/glomatico/wrapper-v2) server for wrapper-backed account, playback, and decryption requests. Enable it with `--use-wrapper` or `use_wrapper = true`. Configure wrapper HTTP account/playback calls with `--wrapper-url` or `wrapper_url`, and configure WV2D batch TCP decrypt with `--wrapper-decrypt-host` / `--wrapper-decrypt-port`.
 
-The wrapper is recommended when using these non-web song codecs:
+gamdl builds a private Rust extension from `gamdl/downloader/ammuxer` as `gamdl._ammuxer`. That native media engine handles wrapper TCP decrypt/reassembly plus MP4/M4A writing and muxing; Python remains responsible for the CLI, downloads, metadata tagging, and high-level orchestration.
 
-- `aac`
-- `aac-he`
-- `aac-binaural`
-- `aac-downmix`
-- `aac-he-binaural`
-- `aac-he-downmix`
-- `atmos`
-- `ac3`
-- `alac`
+The wrapper is recommended when using the `alac` song codec. ALAC can be attempted without wrapper, but it probably won't work due to API limitations.
 
 **Note:**
 
 - When using the Wrapper, you'll be asked to insert your credentials to login if you haven't already.
-- Web song codecs such as `aac-web` and `aac-he-web` do not require the wrapper.
+- Newer wrapper-v2 builds use HTTP JSON for account/playback and WV2D batch TCP port `10020` for decrypt.
+- Song codecs other than `alac` do not require the wrapper.
 - Cookies can be skipped when using the wrapper.
 
 #### N_m3u8DL-RE
@@ -149,7 +142,9 @@ The file is created automatically on first run. Command-line arguments override 
 | `--no-config-file`, `-n`        | Don't use a config file                                           | `false`                       |
 | **Apple Music Options**         |                                                                   |                               |
 | `--cookies-path`, `-c`          | Cookies file path                                                 | `./cookies.txt`               |
-| `--wrapper-url`                 | Wrapper base URL                                                  | `http://127.0.0.1`            |
+| `--wrapper-url`                 | Wrapper HTTP control base URL                                     | `http://127.0.0.1`            |
+| `--wrapper-decrypt-host`        | Wrapper TCP decrypt host                                          | `127.0.0.1`                   |
+| `--wrapper-decrypt-port`        | Wrapper TCP decrypt port                                          | `10020`                       |
 | `--language`, `-l`              | Metadata language                                                 | `en-US`                       |
 | **Interface Options**           |                                                                   |                               |
 | `--cover-format`                | Cover format                                                      | `jpg`                         |
@@ -240,7 +235,7 @@ Use ISO 639-1 language codes (e.g., `en-US`, `es-ES`, `ja-JP`, `pt-BR`). Don't a
 - `aac-web` - AAC 256kbps 44.1kHz
 - `aac-he-web` - AAC-HE 64kbps 44.1kHz
 
-**Non-web** (wrapper recommended; may not work without wrapper due to API limitations):
+**Non-web** (`alac` can be attempted without wrapper, but it probably won't work due to API limitations):
 
 - `aac` - AAC 256kbps up to 48kHz
 - `aac-he` - AAC-HE 64kbps up to 48kHz

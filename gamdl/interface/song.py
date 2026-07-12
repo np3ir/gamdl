@@ -192,36 +192,37 @@ class AppleMusicSongInterface:
 
         return f"[{timestamp.strftime('%M:%S.%f')[:-4]}]{text}"
 
-    def _get_m3u8_from_playback(self, playback: dict) -> str | None:
-        return playback["songList"][0].get("hls-playlist-url")
+    def _switch_m3u8_master_url_to_default(self, m3u8_master_url: str) -> str:
+        return re.sub(
+            r"(P\d+)_[^/]+(\.m3u8)",
+            r"\1_default\2",
+            m3u8_master_url,
+        )
 
-    async def get_m3u8_master_url(
-        self,
-        playback: dict | None,
-        song_metadata: dict | None,
-    ) -> str | None:
-        if playback:
-            return self._get_m3u8_from_playback(playback)
-        else:
-            return await self._get_m3u8_master_url_from_assets(song_metadata)
+    def _get_m3u8_from_playback(self, playback: dict) -> str | None:
+        log = logger.bind(action="get_m3u8_master_url_from_playback")
+
+        m3u8_master_url = playback["songList"][0].get("hls-playlist-url")
+
+        if m3u8_master_url:
+            m3u8_master_url = self._switch_m3u8_master_url_to_default(m3u8_master_url)
+            log.debug("success", m3u8_master_url=m3u8_master_url)
+            return m3u8_master_url
+
+        log.debug("no_m3u8_master_url")
 
     async def _get_m3u8_master_url_from_assets(
         self,
-        song_metadata: dict,
+        media_id: str,
     ) -> str | None:
         log = logger.bind(
             action="get_m3u8_master_url_from_assets",
-            song_id=song_metadata["id"],
+            song_id=media_id,
         )
 
-        if song_metadata["attributes"]["playParams"].get("isLibrary"):
-            log.debug("library_song_no_m3u8_master_url")
-            return None
-
-        play_params = song_metadata["attributes"].get("playParams", {})
         assets = await self.base.apple_music_api.get_assets(
-            play_params.get("id") or song_metadata["id"],
-            play_params.get("kind", "song"),
+            media_id,
+            "song",
         )
 
         asset = next(
@@ -235,6 +236,7 @@ class AppleMusicSongInterface:
         enhanced = asset["url"] if asset else None
 
         if enhanced:
+            enhanced = self._switch_m3u8_master_url_to_default(enhanced)
             log.debug("success", m3u8_master_url=enhanced)
             return enhanced
 
@@ -242,22 +244,44 @@ class AppleMusicSongInterface:
 
         return None
 
+    async def _get_m3u8_master_url(
+        self,
+        media_id: str,
+        playback: dict | None,
+    ) -> str | None:
+        if playback:
+            m3u8_master_url = self._get_m3u8_from_playback(playback)
+            if m3u8_master_url:
+                return m3u8_master_url
+
+        return await self._get_m3u8_master_url_from_assets(media_id)
+
     async def get_stream_info(
         self,
         media_id: str,
         is_library: bool,
-        m3u8_master_url: str | None = None,
         webplayback: dict | None = None,
+        playback: dict | None = None,
     ) -> StreamInfoAv:
         stream_info = None
 
         if is_library:
             stream_info = await self._get_library_stream_info(webplayback)
         else:
+            m3u8_master_url = None
+            fetched_m3u8_master_url = False
+
             for codec in self.codec_priority:
                 if codec.is_web:
                     stream_info = await self._get_web_stream_info(webplayback, codec)
                 else:
+                    if not fetched_m3u8_master_url:
+                        m3u8_master_url = await self._get_m3u8_master_url(
+                            media_id,
+                            playback,
+                        )
+                        fetched_m3u8_master_url = True
+
                     stream_info = await self._get_stream_info_nonweb(
                         m3u8_master_url,
                         codec,
@@ -676,11 +700,13 @@ class AppleMusicSongInterface:
             media.tags = await self.base.get_tags_from_asset_info(
                 playback["songList"][0]["assets"][0]["metadata"],
                 media.lyrics.unsynced if media.lyrics else None,
+                self.use_album_date,
             )
         else:
             media.tags = await self.base.get_tags_from_asset_info(
                 webplayback["songList"][0]["assets"][0]["metadata"],
                 media.lyrics.unsynced if media.lyrics else None,
+                self.use_album_date,
             )
 
         # Extract featured/guest artists from title and clean (matching OrpheusDL logic)
@@ -739,16 +765,11 @@ class AppleMusicSongInterface:
                         break
 
         if not self.skip_stream_info:
-            m3u8_master_url = await self.get_m3u8_master_url(
-                playback,
-                media.media_metadata,
-            )
-
             media.stream_info = await self.get_stream_info(
                 media.media_id,
                 media.is_library,
-                m3u8_master_url,
                 webplayback,
+                playback,
             )
 
             if media.stream_info.audio_track.drm_free:
