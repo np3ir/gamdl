@@ -275,16 +275,19 @@ class AppleMusicApi:
     ) -> "AppleMusicApi":
         auth = wrapper_api.me.get("auth", {})
         media_user_token = auth.get("music_user_token")
-        token = auth.get("dev_token")
-        if not media_user_token or not token:
+        if not media_user_token:
             raise GamdlApiResponseError(
                 "Wrapper account info is missing auth tokens",
                 status_code=None,
             )
 
+        # Do NOT reuse the wrapper's dev_token: Apple dev tokens are short-lived
+        # (~5 min) and the wrapper serves the one it cached at login, which is
+        # usually stale by the time we use it (-> 401 on every AMP request). Only
+        # the music_user_token (account session) needs to come from the wrapper;
+        # create() fetches a fresh dev_token via get_token().
         return await cls.create(
             media_user_token=media_user_token,
-            token=token,
             *args,
             **kwargs,
         )
