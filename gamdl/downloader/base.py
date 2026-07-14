@@ -17,7 +17,7 @@ from ..interface.enums import CoverFormat
 from ..interface.interface import AppleMusicInterface
 from ..interface.types import MediaTags, PlaylistTags
 from ..utils import CustomStringFormatter, async_subprocess
-from .constants import FULLWIDTH_REPLACEMENTS, ILLEGAL_CHAR_REPLACEMENT, ILLEGAL_CHARS_RE, TEMP_PATH_TEMPLATE
+from .constants import DASH_TO_HYPHEN, FULLWIDTH_REPLACEMENTS, ILLEGAL_CHAR_REPLACEMENT, ILLEGAL_CHARS_RE, TEMP_PATH_TEMPLATE
 from .enums import DownloadMode
 
 logger = structlog.get_logger(__name__)
@@ -236,6 +236,8 @@ class AppleMusicBaseDownloader:
     ) -> str:
         # Strip control characters (ASCII 0-31) — illegal in Windows filenames
         sanitized_string = re.sub(r"[\x00-\x1f]", "", dirty_string)
+        # Normalize Unicode dash lookalikes to "-" (keeps names consistent with tiddl)
+        sanitized_string = sanitized_string.translate(DASH_TO_HYPHEN)
 
         if self.use_fullwidth_replacements:
             for char, replacement in FULLWIDTH_REPLACEMENTS.items():
