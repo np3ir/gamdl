@@ -84,7 +84,7 @@ class AppleMusicApi:
                 retry=Retry(
                     total=5,
                     backoff_factor=1,
-                    status_forcelist=[429, 500, 502, 503, 504],
+                    status_forcelist=[401, 429, 500, 502, 503, 504],
                 )
             ),
         ) as client:
@@ -151,7 +151,7 @@ class AppleMusicApi:
                 retry=Retry(
                     total=5,
                     backoff_factor=1,
-                    status_forcelist=[429, 500, 502, 503, 504],
+                    status_forcelist=[401, 429, 500, 502, 503, 504],
                 )
             ),
         ) as client:
@@ -212,7 +212,7 @@ class AppleMusicApi:
                 retry=Retry(
                     total=6,
                     backoff_factor=1,
-                    status_forcelist=[429, 500, 502, 503, 504],
+                    status_forcelist=[401, 429, 500, 502, 503, 504],
                 )
             ),
         )
