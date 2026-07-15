@@ -211,6 +211,29 @@ class AppleMusicBaseDownloader:
         )
         return normalized if "A" <= normalized <= "Z" else "#"
 
+    @staticmethod
+    def _normalize_artist_name(name: str) -> str:
+        """Comparison key: accent-insensitive, case-insensitive, whitespace
+        collapsed — "Rosalia" == "ROSALÍA". Parity with tiddl/streamrip
+        dedup_artists."""
+        decomposed = unicodedata.normalize("NFKD", str(name))
+        stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
+        return " ".join(stripped.casefold().split())
+
+    @classmethod
+    def _dedup_artists(cls, names) -> list:
+        """Drop duplicate artist names (per _normalize_artist_name), keeping
+        order and the FIRST spelling seen."""
+        seen = set()
+        out = []
+        for n in names:
+            key = cls._normalize_artist_name(n)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(n)
+        return out
+
     def _apply_artist_separator(self, artist_str: str, featured: list = None) -> str:
         """Split and rejoin artists in alphabetical order for cross-platform consistency."""
         if not artist_str:
@@ -221,7 +244,8 @@ class AppleMusicBaseDownloader:
             all_parts.extend(re.split(r", ", segment))
         all_parts = [p.strip() for p in all_parts if p.strip()]
 
-        parts = sorted(all_parts)
+        # Dedup normalizado antes de ordenar (conserva la primera grafía vista)
+        parts = sorted(self._dedup_artists(all_parts))
         # Cap the NAME only (the ARTIST tag is written from tags.artist): render
         # the first N artists + "& others" so huge lists don't blow MAX_PATH.
         if len(parts) > MAX_ARTISTS_IN_NAME:
