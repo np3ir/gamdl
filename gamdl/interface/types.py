@@ -76,10 +76,12 @@ class MediaTags:
             "aART": self.album_artist,
             "plID": self.album_id,
             "soal": self.album_sort,
-            # Apple joins collaborators with " & " / ", "; the downloader uses " / ".
-            # Split on all three so the tag is truly multi-value per artist.
+            # Opcion A: UN solo valor unido con " / " (VJ/RadioBoss no leen tags
+            # de artista multivaluados; muestran solo el primero). Se parte solo
+            # por ", " y " / " (NO por " & ") para no romper nombres que llevan
+            # "&" adentro, ej. "Wisin & Yandel".
             "\xa9ART": (
-                [a for a in (p.strip() for p in re.split(r" / |, | & ", self.artist)) if a]
+                [" / ".join(a for a in (p.strip() for p in re.split(r" / |, ", self.artist)) if a)]
                 if self.artist
                 else None
             ),
